@@ -5,21 +5,33 @@
 
 using CppAD::AD;
 
-// TODO: Set the timestep length and duration
-size_t N = 0;
-double dt = 0;
+size_t N = 10;
+double dt = 0.1;
 
-// This value assumes the model presented in the classroom is used.
-//
-// It was obtained by measuring the radius formed by running the vehicle in the
-// simulator around in a circle with a constant steering angle and velocity on a
-// flat terrain.
-//
-// Lf was tuned until the the radius formed by the simulating the model
-// presented in the classroom matched the previous radius.
-//
-// This is the length from front to CoG that has a similar radius.
 const double Lf = 2.67;
+
+//Objectives for MPC
+//Have the car on the line, align with the line and at max velocity
+double ref_cte = 0;
+double ref_epsi = 0;
+double ref_v = 100;
+
+/**
+ * Vars is a very long vector, and if you have N timesteps
+ * x's will be from 0 to N-1,
+ * y's will be from N to 2N-1,
+ * and so on...
+ * these values defined are nothing but constants to access the elements from vars vector
+ *
+ */
+size_t x_start = 0;
+size_t y_start = x_start + N;
+size_t psi_start = y_start + N;
+size_t v_start = psi_start + N;
+size_t cte_start = v_start + N;
+size_t epsi_start = cte_start + N;
+size_t delta_start = epsi_start + N;
+size_t a_start = delta_start + N - 1;
 
 class FG_eval {
  public:
@@ -28,12 +40,82 @@ class FG_eval {
   FG_eval(Eigen::VectorXd coeffs) { this->coeffs = coeffs; }
 
   typedef CPPAD_TESTVECTOR(AD<double>) ADvector;
-  void operator()(ADvector& fg, const ADvector& vars) {
-    // TODO: implement MPC
-    // `fg` a vector of the cost constraints, `vars` is a vector of variable values (state & actuators)
-    // NOTE: You'll probably go back and forth between this function and
-    // the Solver function below.
-  }
+	void operator()(ADvector& fg, const ADvector& vars) {
+
+		//fg[0] is the cost function
+		//fg[1 to N] is the constraints vector
+		fg[0] = 0;
+
+		/**
+		 * The part of the cost based on the reference state.
+		 * coeffs below are the weights applied to a particular type of error
+		 * how much weight you want to give for that particular error
+		 * you might want to give importance to cte & epsi, but not much to velocity or delta or a
+		 *
+		 */
+		for (int t = 0; t < N; t++) {
+			fg[0] += 2000 * CppAD::pow(vars[cte_start + t] - ref_cte, 2);
+			fg[0] += 2000 * CppAD::pow(vars[epsi_start + t] - ref_epsi, 2);
+			fg[0] += CppAD::pow(vars[v_start + t] - ref_v, 2);
+		}
+
+		// Minimize the use of actuators.
+		for (int t = 0; t < N - 1; t++) {
+			fg[0] += 5 * CppAD::pow(vars[delta_start + t], 2);
+			fg[0] += 5 * CppAD::pow(vars[a_start + t], 2);
+		}
+
+		// Minimize the value gap between sequential actuations.
+		for (int t = 0; t < N - 2; t++) {
+			fg[0] += 200 * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+			fg[0] += 10 * CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+		}
+
+		/**
+		 * Vars initialization
+		 * vars[0] is the cost function, so you need to start from 1
+		 *
+		 */
+
+	    fg[1 + x_start] = vars[x_start];
+	    fg[1 + y_start] = vars[y_start];
+	    fg[1 + psi_start] = vars[psi_start];
+	    fg[1 + v_start] = vars[v_start];
+	    fg[1 + cte_start] = vars[cte_start];
+	    fg[1 + epsi_start] = vars[epsi_start];
+
+	    // The rest of the constraints
+	    for (int t = 0; t < N-1; t++) {
+	      // The state at time t+1 .
+	      AD<double> x1 = vars[x_start + t + 1];
+	      AD<double> y1 = vars[y_start + t + 1];
+	      AD<double> psi1 = vars[psi_start + t + 1];
+	      AD<double> v1 = vars[v_start + t + 1];
+	      AD<double> cte1 = vars[cte_start + t + 1];
+	      AD<double> epsi1 = vars[epsi_start + t + 1];
+
+	      // The state at time t.
+	      AD<double> x0 = vars[x_start + t];
+	      AD<double> y0 = vars[y_start + t];
+	      AD<double> psi0 = vars[psi_start + t];
+	      AD<double> v0 = vars[v_start + t];
+	      AD<double> cte0 = vars[cte_start + t];
+	      AD<double> epsi0 = vars[epsi_start + t];
+
+	      // Only consider the actuation at time t.
+	      AD<double> delta0 = vars[delta_start + t];
+	      AD<double> a0 = vars[a_start + t];
+
+	      AD<double> f0 = coeffs[0] + coeffs[1] * x0 + coeffs[2] * x0 * x0 + coeffs[3] * x0 *x0 *x0;
+	      AD<double> psides0 = CppAD::atan(3 * coeffs[3] * x0 * x0 + 2 * coeffs[2] * x0 + coeffs[1]);
+
+	      fg[2 + x_start + t] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
+	      fg[2 + y_start + t] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
+	      fg[2 + psi_start + t] = psi1 - (psi0 - v0 * delta0 / Lf * dt);
+	      fg[2 + v_start + t] = v1 - (v0 + a0 * dt);
+	      fg[2 + cte_start + t] = cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * dt));
+	      fg[2 + epsi_start + t] = epsi1 - ((psi0 - psides0) + v0 * delta0 / Lf * dt);
+	}
 };
 
 //
