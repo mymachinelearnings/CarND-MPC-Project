@@ -67,7 +67,7 @@ class FG_eval {
 
 		// Minimize the value gap between sequential actuations.
 		for (int t = 0; t < N - 2; t++) {
-			fg[0] += 200 * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+			fg[0] += 200 * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);  //TODO alter this if the jerks are more
 			fg[0] += 10 * CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
 		}
 
@@ -129,17 +129,23 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   size_t i;
   typedef CPPAD_TESTVECTOR(double) Dvector;
 
-  // TODO: Set the number of model variables (includes both states and inputs).
-  // For example: If the state is a 4 element vector, the actuators is a 2
-  // element vector and there are 10 timesteps. The number of variables is:
-  //
-  // 4 * 10 + 2 * 9
-  size_t n_vars = 0;
-  // TODO: Set the number of constraints
-  size_t n_constraints = 0;
+  double x = state[0];
+  double y = state[1];
+  double psi = state[2];
+  double v = state[3];
+  double cte = state[4];
+  double epsi = state[5];
 
-  // Initial value of the independent variables.
-  // SHOULD BE 0 besides initial state.
+  //Total length of var is n times each of the 6 state variables + (N-1) for each of delta & a
+  //Since delta & a doens't make sense for hte last timestep as it dones't have next timestep to calculate delta & a, the lenght is N-1
+  size_t n_vars = N * 6 + (N-1) * 2;
+  size_t n_constraints = N * 6;
+
+  /**
+   * Initializing all vars to 0
+   * The first vars values for each of the parameters should be current state
+   *
+   */
   Dvector vars(n_vars);
   for (int i = 0; i < n_vars; i++) {
     vars[i] = 0;
@@ -147,7 +153,31 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
 
   Dvector vars_lowerbound(n_vars);
   Dvector vars_upperbound(n_vars);
-  // TODO: Set lower and upper limits for variables.
+
+  /**
+   * Setting lower and upper bounds
+   * for x, y, psi, v, cte, psi - values could be anything
+   * so just set them to very low and very high values as boundaries
+   * For delta, it should be -25 degree to + 25 degree
+   * For throttle, it should be -1 to +1
+   */
+
+  for(int i=0; i<delta_start; i++) {
+	  vars_lowerbound[i] = -1.0e12;
+	  vars_upperbound[i] =  1.0e12;
+  }
+
+  for(int i=delta_start; i<a_start; i++) {
+	  vars_lowerbound[i] = -0.436332 * Lf;
+	  vars_upperbound[i] =  0.436332 * Lf;
+  }
+
+  for(int i=a_start; i<n_vars; i++) {
+	  vars_lowerbound[i] = -1.0;
+	  vars_upperbound[i] =  1.0;
+  }
+
+
 
   // Lower and upper limits for the constraints
   // Should be 0 besides initial state.
@@ -157,6 +187,22 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
     constraints_lowerbound[i] = 0;
     constraints_upperbound[i] = 0;
   }
+
+  //Initial state should be same as current state, otherwise the solver might suddenly apply the values from 0 which is a sudden jerk
+  constraints_lowerbound[x_start] = x;
+  constraints_lowerbound[y_start] = y;
+  constraints_lowerbound[psi_start] = psi;
+  constraints_lowerbound[v_start] = v;
+  constraints_lowerbound[cte_start] = cte;
+  constraints_lowerbound[epsi_start] = epsi;
+
+  constraints_upperbound[x_start] = x;
+  constraints_upperbound[y_start] = y;
+  constraints_upperbound[psi_start] = psi;
+  constraints_upperbound[v_start] = v;
+  constraints_upperbound[cte_start] = cte;
+  constraints_upperbound[epsi_start] = epsi;
+
 
   // object that computes objective and constraints
   FG_eval fg_eval(coeffs);
@@ -194,10 +240,15 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   auto cost = solution.obj_value;
   std::cout << "Cost " << cost << std::endl;
 
-  // TODO: Return the first actuator values. The variables can be accessed with
-  // `solution.x[i]`.
-  //
-  // {...} is shorthand for creating a vector, so auto x1 = {1.0,2.0}
-  // creates a 2 element double vector.
-  return {};
+  vector<double> result;
+
+  result.push_back(solution.x[delta_start]);
+  result.push_back(solution.x[a_start]);
+
+  for(int i=0; i<N-1; i++) {
+	  result.push_back(solution.x[x_start + i + 1]);
+	  result.push_back(solution.x[y_start + i + 1]);
+  }
+
+  return result;
 }
