@@ -91,6 +91,8 @@ int main() {
           double py = j[1]["y"];
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
+          double steer_value = j[1]["steering_angle"];
+          double throttle_value = j[1]["throttle"];
 
           /**
            * Changing the reference co-ordinates to match the car's current position and orientation
@@ -98,21 +100,23 @@ int main() {
            * 1. Shift the axes to the current position
            * 2. Rotate the axes to align to car's current orientation (psi)
            */
+          vector<double> ptsx_car;
+          vector<double> ptsy_car;
 
 
-          for(int i=0; i<ptsx.size(); i++) {
+          for(unsigned int i=0; i<ptsx.size(); i++) {
         	  //Moving the frame of reference
-        	  ptx_temp = ptsx[i] - px;
-        	  pty_temp = ptsy[i] - py;
+        	  double diffx = ptsx[i] - px;
+        	  double diffy = ptsy[i] - py;
         	  //Turning the frame of reference
-        	  ptsx[i] = ptx_temp * cos(0-psi) - pty_temp * sin(0-psi);
-        	  ptsy[i] = pty_temp * sin(0-psi) + pty_temp * cos(0-psi);
+        	  ptsx_car.push_back(diffx * cos(0-psi) - diffy * sin(0-psi));
+        	  ptsy_car.push_back(diffx * sin(0-psi) + diffy * cos(0-psi));
           }
 
-          double *ptrx = &ptsx[0];
+          double *ptrx = &ptsx_car[0];
           Eigen::Map<Eigen::VectorXd> ptsx_transform(ptrx, 6);
 
-          double *ptry = &ptsy[0];
+          double *ptry = &ptsy_car[0];
           Eigen::Map<Eigen::VectorXd> ptsy_transform(ptry, 6);
 
           auto coeffs = polyfit(ptsx_transform, ptsy_transform, 3);
@@ -123,16 +127,32 @@ int main() {
           //since x is 0 (we made the axis shift, we are left with only coeffs[1]
           double epsi = -atan(coeffs[1]);
 
-          double steer_value = j[1]["steering_angle"];
-          double throttle_value = j[1]["throttle"];
-
           Eigen::VectorXd state(6);
-          state << 0, 0, 0, v, cte, epsi;
+
+          /**
+           * It is given that the latency is 0.1 seconds
+           * In order to account for latency, instead of using the current state
+           * we'll use the future state at t = 0.1 sec and use that as the current state
+           * This accounts for any changes during this 0.1 second at which the actuator commands actually take place
+           *
+           */
+//          state << 0, 0, 0, v, cte, epsi;
+
+          const double Lf = 2.67;
+          const double dt = 0.1;
+
+          double future_x = 0 + v*dt;
+          double future_y = 0; //since the vehicle direction is in the direction of x axis
+          double future_psi = 0 - v * steer_value / Lf * dt;
+          double future_v = v + throttle_value * dt;
+          double future_cte = cte + v * sin(epsi) * dt;
+          double future_epsi = epsi - v * steer_value / Lf * dt;
+
+          state << future_x, future_y, future_psi, future_v, future_cte, future_epsi;
+
 
           //coeffs are passed since we need to calculate the future cte and epsi(error in orientation)
           auto vars = mpc.Solve(state, coeffs);
-          cout << "vars returned " << vars << endl;
-
 
           vector<double> next_x_vals;
           vector<double> next_y_vals;
@@ -155,7 +175,7 @@ int main() {
           vector<double> mpc_x_vals;
           vector<double> mpc_y_vals;
 
-          for(int i=2; i<vars.size(); i++) {
+          for(unsigned int i=2; i<vars.size(); i++) {
         	  if(i%2 == 0) {
         		  mpc_x_vals.push_back(vars[i]);
         	  } else {
@@ -163,8 +183,6 @@ int main() {
         	  }
           }
 
-
-          double Lf = 2.67;
 
           /**
            * This block passes the info to the simulator

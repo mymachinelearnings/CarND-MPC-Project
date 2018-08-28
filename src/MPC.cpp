@@ -14,10 +14,10 @@ const double Lf = 2.67;
 //Have the car on the line, align with the line and at max velocity
 double ref_cte = 0;
 double ref_epsi = 0;
-double ref_v = 100;
+double ref_v = 70;
 
 /**
- * Vars is a very long vector, and if you have N timesteps
+ * vars is a very long vector, and if you have N timesteps
  * x's will be from 0 to N-1,
  * y's will be from N to 2N-1,
  * and so on...
@@ -51,24 +51,37 @@ class FG_eval {
 		 * coeffs below are the weights applied to a particular type of error
 		 * how much weight you want to give for that particular error
 		 * you might want to give importance to cte & epsi, but not much to velocity or delta or a
+		 * since cte & error in orientation are super important as they are the primary factors for error, have their values as higher
 		 *
 		 */
-		for (int t = 0; t < N; t++) {
-			fg[0] += 2000 * CppAD::pow(vars[cte_start + t] - ref_cte, 2);
-			fg[0] += 2000 * CppAD::pow(vars[epsi_start + t] - ref_epsi, 2);
-			fg[0] += CppAD::pow(vars[v_start + t] - ref_v, 2);
+
+	    const int cte_cost_weight = 2000;
+	    const int epsi_cost_weight = 2000;
+	    const int v_cost_weight = 1;
+	    const int delta_cost_weight = 5;
+	    const int a_cost_weight = 5;
+//	    const int delta_vel_weight = 700;
+	    const int delta_change_cost_weight = 200;
+	    const int a_change_cost_weight = 10;
+
+		for (unsigned int t = 0; t < N; t++) {
+			fg[0] += cte_cost_weight  * CppAD::pow(vars[cte_start + t] - ref_cte, 2);
+			fg[0] += epsi_cost_weight * CppAD::pow(vars[epsi_start + t] - ref_epsi, 2);
+			fg[0] += v_cost_weight    * CppAD::pow(vars[v_start + t] - ref_v, 2);
 		}
 
 		// Minimize the use of actuators.
-		for (int t = 0; t < N - 1; t++) {
-			fg[0] += 5 * CppAD::pow(vars[delta_start + t], 2);
-			fg[0] += 5 * CppAD::pow(vars[a_start + t], 2);
+		for (unsigned int t = 0; t < N - 1; t++) {
+			fg[0] += delta_cost_weight * CppAD::pow(vars[delta_start + t], 2);
+			fg[0] += a_cost_weight * CppAD::pow(vars[a_start + t], 2);
+
+//			fg[0] += delta_vel_weight * CppAD::pow(vars[delta_start + t] * vars[a_start + t], 2);
 		}
 
 		// Minimize the value gap between sequential actuations.
-		for (int t = 0; t < N - 2; t++) {
-			fg[0] += 200 * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);  //TODO alter this if the jerks are more
-			fg[0] += 10 * CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+		for (unsigned int t = 0; t < N - 2; t++) {
+			fg[0] += delta_change_cost_weight * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);  //TODO alter this if the jerks are more
+			fg[0] += a_change_cost_weight * CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
 		}
 
 		/**
@@ -85,7 +98,7 @@ class FG_eval {
 	    fg[1 + epsi_start] = vars[epsi_start];
 
 	    // The rest of the constraints
-	    for (int t = 0; t < N-1; t++) {
+	    for (unsigned int t = 0; t < N-1; t++) {
 	      // The state at time t+1 .
 	      AD<double> x1 = vars[x_start + t + 1];
 	      AD<double> y1 = vars[y_start + t + 1];
@@ -106,15 +119,16 @@ class FG_eval {
 	      AD<double> delta0 = vars[delta_start + t];
 	      AD<double> a0 = vars[a_start + t];
 
-	      AD<double> f0 = coeffs[0] + coeffs[1] * x0 + coeffs[2] * x0 * x0 + coeffs[3] * x0 *x0 *x0;
+	      AD<double> f0 = coeffs[0] + coeffs[1] * x0 + coeffs[2] * x0 * x0 + coeffs[3] * x0 * x0 * x0;
 	      AD<double> psides0 = CppAD::atan(3 * coeffs[3] * x0 * x0 + 2 * coeffs[2] * x0 + coeffs[1]);
 
 	      fg[2 + x_start + t] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
 	      fg[2 + y_start + t] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
-	      fg[2 + psi_start + t] = psi1 - (psi0 - v0 * delta0 / Lf * dt);
+	      fg[2 + psi_start + t] = psi1 - (psi0 - v0/Lf * delta0 * dt);
 	      fg[2 + v_start + t] = v1 - (v0 + a0 * dt);
 	      fg[2 + cte_start + t] = cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * dt));
-	      fg[2 + epsi_start + t] = epsi1 - ((psi0 - psides0) + v0 * delta0 / Lf * dt);
+	      fg[2 + epsi_start + t] = epsi1 - ((psi0 - psides0) - v0/Lf * delta0 * dt); //TODO is this minus
+	    }
 	}
 };
 
@@ -126,7 +140,7 @@ MPC::~MPC() {}
 
 vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   bool ok = true;
-  size_t i;
+  //size_t i;
   typedef CPPAD_TESTVECTOR(double) Dvector;
 
   double x = state[0];
@@ -147,7 +161,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
    *
    */
   Dvector vars(n_vars);
-  for (int i = 0; i < n_vars; i++) {
+  for (unsigned int i = 0; i < n_vars; i++) {
     vars[i] = 0;
   }
 
@@ -162,17 +176,17 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
    * For throttle, it should be -1 to +1
    */
 
-  for(int i=0; i<delta_start; i++) {
-	  vars_lowerbound[i] = -1.0e12;
-	  vars_upperbound[i] =  1.0e12;
+  for(unsigned int i=0; i<delta_start; i++) {
+	  vars_lowerbound[i] = -1.0e19; //TODO chk with 12
+	  vars_upperbound[i] =  1.0e19;
   }
 
-  for(int i=delta_start; i<a_start; i++) {
+  for(unsigned int i=delta_start; i<a_start; i++) {
 	  vars_lowerbound[i] = -0.436332 * Lf;
 	  vars_upperbound[i] =  0.436332 * Lf;
   }
 
-  for(int i=a_start; i<n_vars; i++) {
+  for(unsigned int i=a_start; i<n_vars; i++) {
 	  vars_lowerbound[i] = -1.0;
 	  vars_upperbound[i] =  1.0;
   }
@@ -183,7 +197,8 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   // Should be 0 besides initial state.
   Dvector constraints_lowerbound(n_constraints);
   Dvector constraints_upperbound(n_constraints);
-  for (int i = 0; i < n_constraints; i++) {
+
+  for (unsigned int i = 0; i < n_constraints; i++) {
     constraints_lowerbound[i] = 0;
     constraints_upperbound[i] = 0;
   }
@@ -245,7 +260,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   result.push_back(solution.x[delta_start]);
   result.push_back(solution.x[a_start]);
 
-  for(int i=0; i<N-1; i++) {
+  for(unsigned int i=0; i<N-1; i++) {
 	  result.push_back(solution.x[x_start + i + 1]);
 	  result.push_back(solution.x[y_start + i + 1]);
   }

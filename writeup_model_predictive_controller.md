@@ -34,6 +34,29 @@ Hence we are constantly calculations actuator values over future horizon. Hence 
 
 #### Project Explanation
 
+Before we go into the deatils of the project files, here's the model considered in this project
+
+- **State** : This project assumes kinematic model where the only factors considered are position (x, y), velocity, angle of orientation, cross track error & error in orientation.
+
+![State](writeup/state.jpg)
+
+- **Actuators** : The actuators are the controls that affect the vehicle movement. In this case, we have steering, break and throttle. 
+
+	For simplicity, we can combine break and throttle as a single control where the values can range in [-1, 1].
+-1 is complete break and +1 is complete throttle. These are represented by delta & acceleration. Please refer to boundary conditions for some addl info on the values of these controls
+
+- **Update Equations** : This project assumes kinematic model where the only factors considered are position (x, y), velocity, angle of orientation, cross track error & error in orientation. The following equations are used
+The following equations are used by the Solve function
+
+- **Receeding Horizon Control** : The reason why this model is called horizon control is that we take into account only certain time steps in future as the current state can affect only upto a certain point and beyond which
+the factors that affect the position might vary. Ideally we want to estimate more points in future so that we can get accurate polynomial fit, but its not realistic as it is computationally expensive. Instead, we will choose
+an optimum time in future and break them in to appropriate steps.
+In this project, I've taken 10 steps in future with a delta of 0.1 second meaning i'm considering 1 second worth of future state into consideration to determine my path. In my view, this is 10 steps and is sufficient enough
+to predict the line almost accurately, and at the same time not comupationally intensive. Also the numbers 10 & 0.1 are pretty simple for calculations 
+
+![MPC Model](writeup/model.png)
+
+
 This project consists of 2 files
 
 ***main.cpp***
@@ -62,6 +85,15 @@ Determining weights is done by intuition and trial-and-error methods. Sometimes 
 Setting boundaries is a good way of making sure of such things. Lower and uppoer bounds are set to turn angle and throttle as well as constraints.
 - **Solve function** : This function models the Model Predictive Controller. It takes in the current state, co-efficients of the polynomial determined for hte vehicle and comes up with the best possible estimate of the 
 next set of points as well as other parameters. It also comes up with the steering angle and throttle.
+
+---
+###Issues faced
+I found issues while installing Ipopt library. It took me a lot of time, but ultimately, it turns out to be pretty straight forward
+
+- sudo apt-get install gfortran
+- sudo apt-get install unzip
+-  wget https://www.coin-or.org/download/source/Ipopt/Ipopt-3.12.7.zip && unzip Ipopt-3.12.7.zip && rm Ipopt-3.12.7.zip
+- sudo install_ipopt.sh Ipopt-3.12.7
 
 ---
 ### Conclusion
